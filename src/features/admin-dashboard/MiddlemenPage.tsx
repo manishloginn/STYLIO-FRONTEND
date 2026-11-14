@@ -1,8 +1,9 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { FormEvent, useState } from 'react';
-import { Button, Card, PageHeader, inputClass } from '../../components/common/ui';
+import { FormEvent, useMemo, useState } from 'react';
+import { Button, Card, Field, PageHeader, inputClass } from '../../components/common/ui';
 import { formatPaise } from '../../lib/money';
 import { api, ApiError } from '../../services/api';
+import { StatusPill, percentToBps, salonName, useAdminSalons } from './admin-ui';
 
 interface Middleman {
   id: string;
@@ -10,9 +11,10 @@ interface Middleman {
   phone: string;
   status: string;
   defaultRateBps: number;
+  salons?: Array<{ salonId: string; name: string; city: string; agreedRateBps: number }>;
 }
 
-interface MiddlemanDetail extends Middleman {
+interface MiddlemanDetail extends Omit<Middleman, 'salons'> {
   salons: Array<{ id: string; salonId: string; agreedRateBps: number; status: string }>;
   transactions: Array<{
     id: string;
@@ -41,28 +43,56 @@ export function AdminMiddlemen() {
     queryFn: () => api<MiddlemanDetail>(`/admin/middlemen/${selected}`),
     enabled: Boolean(selected),
   });
+  const salons = useAdminSalons();
   const [error, setError] = useState('');
-  const [partner, setPartner] = useState({ name: '', phone: '', rate: '3' });
+  const [partner, setPartner] = useState({ name: '', phone: '', rate: '3', salonId: '' });
   const [mapping, setMapping] = useState({ salonId: '', rate: '3' });
+  const taken = useMemo(() => {
+    const owners = new Map<string, string>();
+    for (const person of middlemen.data || []) {
+      for (const salon of person.salons || []) owners.set(salon.salonId, person.name);
+    }
+    return owners;
+  }, [middlemen.data]);
+
+  function takenMessage(salonId: string) {
+    const owner = taken.get(salonId);
+    if (!owner) return '';
+    const salon = salons.data?.find((row) => row.id === salonId);
+    return `${salon?.name || 'This salon'} already has ${owner}. One salon can have only one middleman.`;
+  }
 
   async function refresh() {
     await queryClient.invalidateQueries({ queryKey: ['middlemen'] });
     await queryClient.invalidateQueries({ queryKey: ['middleman', selected] });
+    await queryClient.invalidateQueries({ queryKey: ['rules'] });
   }
 
   async function onCreate(event: FormEvent) {
     event.preventDefault();
     setError('');
+    const defaultRateBps = percentToBps(partner.rate);
+    if (defaultRateBps == null) {
+      setError('Use a percent like 2 or 3.5.');
+      return;
+    }
+    const blocked = takenMessage(partner.salonId);
+    if (blocked) {
+      setError(blocked);
+      return;
+    }
     try {
-      await api('/admin/middlemen', {
+      const created = await api<Middleman>('/admin/middlemen', {
         method: 'POST',
         body: JSON.stringify({
           name: partner.name,
           phone: partner.phone,
-          defaultRateBps: Math.round(Number(partner.rate) * 100),
+          defaultRateBps,
+          ...(partner.salonId ? { salonId: partner.salonId } : {}),
         }),
       });
-      setPartner({ name: '', phone: '', rate: '3' });
+      setPartner({ name: '', phone: '', rate: '3', salonId: '' });
+      setSelected(created.id);
       await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not save the middleman');
@@ -71,6 +101,11 @@ export function AdminMiddlemen() {
 
   async function onMap(event: FormEvent) {
     event.preventDefault();
+    const blocked = takenMessage(mapping.salonId);
+    if (blocked) {
+      setError(blocked);
+      return;
+    }
     setError('');
     try {
       await api(`/admin/middlemen/${selected}/mappings`, {
@@ -86,27 +121,41 @@ export function AdminMiddlemen() {
 
   return (
     <section>
-      <PageHeader title="Middlemen" subtitle="A partner is paid from the salon commission. Direct salons keep the existing rate with no middleman." />
-      <Card>
-        <form className="grid gap-3 md:grid-cols-4" onSubmit={onCreate}>
-          <input className={inputClass} placeholder="Name" value={partner.name} onChange={(event) => setPartner({ ...partner, name: event.target.value })} />
-          <input className={inputClass} placeholder="Mobile" value={partner.phone} onChange={(event) => setPartner({ ...partner, phone: event.target.value })} />
-          <input className={inputClass} placeholder="Default percent" value={partner.rate} onChange={(event) => setPartner({ ...partner, rate: event.target.value })} />
-          <Button type="submit">Add middleman</Button>
+      <PageHeader title="Middlemen" subtitle="Add a middleman and connect the salon they earn from. Their percent is added to that salon’s base rate." />
+      <Card className="hover:translate-y-0">
+        <form className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5" onSubmit={onCreate}>
+          <Field label="Name"><input className={inputClass} value={partner.name} onChange={(event) => setPartner({ ...partner, name: event.target.value })} required /></Field>
+          <Field label="Mobile"><input className={inputClass} inputMode="tel" value={partner.phone} onChange={(event) => setPartner({ ...partner, phone: event.target.value })} required /></Field>
+          <Field label="Connect to salon">
+            <select className={inputClass} value={partner.salonId} onChange={(event) => { setPartner({ ...partner, salonId: event.target.value }); setError(takenMessage(event.target.value)); }}>
+              <option value="">Choose a salon</option>
+              {(salons.data || []).map((salon) => {
+                const owner = taken.get(salon.id);
+                return <option key={salon.id} value={salon.id}>{salon.name} · {salon.city}{owner ? ` · ${owner}` : ''}</option>;
+              })}
+            </select>
+          </Field>
+          <Field label={partner.salonId ? 'Their percent' : 'Default percent'}><input className={inputClass} inputMode="decimal" value={partner.rate} onChange={(event) => setPartner({ ...partner, rate: event.target.value })} /></Field>
+          <div className="flex items-end"><Button type="submit" className="w-full" disabled={Boolean(takenMessage(partner.salonId))}>Add middleman</Button></div>
         </form>
-        {error ? <p className="mt-3 text-sm text-ink">{error}</p> : null}
+        <p className="mt-3 text-sm text-muted">Leave the salon blank to add the person first. Choosing a salon keeps its base rate and adds this percent on top. Base plus middleman cannot pass 100%.</p>
+        {error ? <p className="mt-3 text-sm text-rose-600">{error}</p> : null}
       </Card>
       <div className="mt-4 grid gap-3">
         {(middlemen.data || []).map((row) => (
           <Card key={row.id}>
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="font-semibold">{row.name}</p>
-                <p className="text-sm text-muted">{row.phone} · {row.status} · default {percent(row.defaultRateBps)}</p>
+                <p className="text-sm text-muted">{row.phone} · default {percent(row.defaultRateBps)}</p>
+                {row.salons?.length ? row.salons.map((salon) => (
+                  <p key={salon.salonId} className="text-sm text-ink">{salon.name}{salon.city ? ` · ${salon.city}` : ''} · {percent(salon.agreedRateBps)}</p>
+                )) : <p className="text-sm text-muted">No salon connected</p>}
               </div>
-              <div className="flex gap-2">
-                <Button onClick={() => setSelected(row.id)}>Open</Button>
-                <Button onClick={async () => {
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusPill value={row.status} />
+                <Button variant={selected === row.id ? 'primary' : 'secondary'} className="w-full sm:w-auto" onClick={() => setSelected(row.id)}>Open</Button>
+                <Button className="w-full sm:w-auto" onClick={async () => {
                   await api(`/admin/middlemen/${row.id}`, { method: 'PATCH', body: JSON.stringify({ status: row.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE' }) });
                   await refresh();
                 }}>{row.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}</Button>
@@ -119,14 +168,24 @@ export function AdminMiddlemen() {
         <div className="mt-6 grid gap-4">
           <Card>
             <p className="font-semibold">Map a salon to {detail.data.name}</p>
-            <form className="mt-3 grid gap-3 md:grid-cols-3" onSubmit={onMap}>
-              <input className={inputClass} placeholder="Salon id" value={mapping.salonId} onChange={(event) => setMapping({ ...mapping, salonId: event.target.value })} />
-              <input className={inputClass} placeholder="Agreed percent" value={mapping.rate} onChange={(event) => setMapping({ ...mapping, rate: event.target.value })} />
-              <Button type="submit">Save mapping</Button>
+            <form className="mt-3 grid gap-3 sm:grid-cols-3" onSubmit={onMap}>
+              <Field label="Salon">
+                <select className={inputClass} value={mapping.salonId} onChange={(event) => { setMapping({ ...mapping, salonId: event.target.value }); setError(takenMessage(event.target.value)); }}>
+                  <option value="">Choose a salon</option>
+                  {(salons.data || []).map((salon) => {
+                    const owner = taken.get(salon.id);
+                    return <option key={salon.id} value={salon.id}>{salon.name} · {salon.city}{owner ? ` · ${owner}` : ''}</option>;
+                  })}
+                </select>
+              </Field>
+              <Field label="Agreed percent">
+                <input className={inputClass} inputMode="decimal" value={mapping.rate} onChange={(event) => setMapping({ ...mapping, rate: event.target.value })} />
+              </Field>
+              <div className="flex items-end"><Button type="submit" className="w-full" disabled={Boolean(takenMessage(mapping.salonId))}>Save mapping</Button></div>
             </form>
             <div className="mt-4 grid gap-2">
               {detail.data.salons.map((salon) => (
-                <p key={salon.id} className="text-sm">{salon.salonId} · {percent(salon.agreedRateBps)} · {salon.status}</p>
+                <p key={salon.id} className="text-sm">{salonName(salons.data, salon.salonId)} · {percent(salon.agreedRateBps)} · {salon.status}</p>
               ))}
               {!detail.data.salons.length ? <p className="text-sm text-muted">No salons mapped yet.</p> : null}
             </div>

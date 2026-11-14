@@ -1,4 +1,4 @@
-import { Compass, KeyRound, Menu, Store, Ticket, UserRound, X } from 'lucide-react';
+import { Compass, KeyRound, LayoutDashboard, Menu, Percent, Store, Ticket, UserRound, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { adminNav } from '../../features/admin-dashboard/pages';
@@ -165,6 +165,18 @@ export function SiteChrome() {
             </NavLink>
             <NavLink to="/profile" className="grid place-items-center py-2 text-xs font-semibold text-muted transition duration-200 active:scale-95">
               <UserRound size={18} /> Account
+            </NavLink>
+          </>
+        ) : user?.role === 'PLATFORM_ADMIN' ? (
+          <>
+            <NavLink to="/admin" end className={({ isActive }) => `grid place-items-center py-2 text-xs font-semibold transition duration-200 active:scale-95 ${isActive ? 'text-primary' : 'text-muted'}`}>
+              <LayoutDashboard size={18} /> Desk
+            </NavLink>
+            <NavLink to="/admin/salons" className={({ isActive }) => `grid place-items-center py-2 text-xs font-semibold transition duration-200 active:scale-95 ${isActive ? 'text-primary' : 'text-muted'}`}>
+              <Store size={18} /> Salons
+            </NavLink>
+            <NavLink to="/admin/commission" className={({ isActive }) => `grid place-items-center py-2 text-xs font-semibold transition duration-200 active:scale-95 ${isActive ? 'text-primary' : 'text-muted'}`}>
+              <Percent size={18} /> Rates
             </NavLink>
           </>
         ) : (

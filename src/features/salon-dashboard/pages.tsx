@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, Outlet, useParams } from 'react-router-dom';
 import { PlanForm } from '../../components/forms/PlanForm';
 import { SalonNav } from '../../components/layout/SalonNav';
@@ -78,9 +78,9 @@ export function SalonOverview() {
   });
   const purchases = useQuery({ queryKey: ['salon-memberships', salonId], queryFn: () => api<Membership[]>(`/memberships/salon/${salonId}?limit=5`) });
   const redemptions = useQuery({ queryKey: ['salon-redemptions', salonId], queryFn: () => api<Redemption[]>(`/redemptions/salon/${salonId}`) });
+  const activeMemberships = stats.data?.activeMemberships ?? 0;
+  const totalMemberships = stats.data?.totalMemberships ?? 0;
   const cards = [
-    ['Stylio sales', formatPaise(stats.data?.stylioSalesPaise)],
-    ['Active memberships', String(stats.data?.activeMemberships ?? 0)],
     ['Redemptions', String(stats.data?.redemptions ?? 0)],
     ['Recorded settlements', formatPaise(stats.data?.recordedSettlementsPaise)],
     ['Commission', formatPaise(stats.data?.commissionPaise)],
@@ -93,8 +93,25 @@ export function SalonOverview() {
         <p className="mt-1 text-sm text-muted">The customer opens their pass and taps “New OTP for this service”. You type that 6-digit code. The platform admin does not check visits.</p>
         <Link to="redemptions" className="mt-4 inline-flex rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white">Open OTP desk</Link>
       </Card>
-      <div className="mb-3 text-sm font-semibold text-muted">Today, {day.label}</div>
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-3">
+        <Card>
+          <p className="text-sm text-muted">Stylio sales</p>
+          <p className="mt-1 text-xs font-semibold text-primary">Today, {day.label}</p>
+          <p className="mt-1 font-display text-2xl">{formatPaise(stats.data?.stylioSalesPaise)}</p>
+        </Card>
+        <Card>
+          <p className="text-sm text-muted">Active memberships</p>
+          <p className="mt-1 font-display text-2xl">
+            <span className="text-success">{activeMemberships}</span>
+            <span className="text-muted"> / </span>
+            <span className="text-primary">{totalMemberships}</span>
+          </p>
+          <p className="mt-1 text-xs text-muted">
+            <span className="font-semibold text-success">Active</span>
+            <span> / </span>
+            <span className="font-semibold text-primary">Total</span>
+          </p>
+        </Card>
         {cards.map(([label, value]) => (
           <Card key={label}><p className="text-sm text-muted">{label}</p><p className="mt-1 font-display text-2xl">{value}</p></Card>
         ))}
@@ -291,6 +308,13 @@ export function SalonRedemptionsPage() {
   const [code, setCode] = useState('');
   const [branchId, setBranchId] = useState('');
   const [message, setMessage] = useState('');
+  const verifiedBranches = useMemo(
+    () => (branches.data || []).filter((branch) => branch.status === 'VERIFIED'),
+    [branches.data],
+  );
+  useEffect(() => {
+    if (verifiedBranches.length === 1 && branchId !== verifiedBranches[0].id) setBranchId(verifiedBranches[0].id);
+  }, [verifiedBranches, branchId]);
   const verify = useMutation({
     mutationFn: () => api<Redemption>('/redemptions/verify', { method: 'POST', body: JSON.stringify({ code, branchId }) }),
     onSuccess: async (row) => {
@@ -307,8 +331,8 @@ export function SalonRedemptionsPage() {
         <form className="grid gap-3 md:grid-cols-3" onSubmit={(event: FormEvent) => { event.preventDefault(); verify.mutate(); }}>
           <input className={inputClass} placeholder="6-digit OTP" value={code} onChange={(event) => setCode(event.target.value)} />
           <select className={inputClass} value={branchId} onChange={(event) => setBranchId(event.target.value)}>
-            <option value="">Branch</option>
-            {branches.data?.filter((branch) => branch.status === 'VERIFIED').map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+            {verifiedBranches.length === 1 ? null : <option value="">Branch</option>}
+            {verifiedBranches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
           </select>
           <Button type="submit">Check service</Button>
         </form>

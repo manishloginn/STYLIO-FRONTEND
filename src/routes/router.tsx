@@ -5,7 +5,6 @@ import { CustomerHome } from '../features/customer/CustomerHome';
 import { LandingPage } from '../features/customer/LandingPage';
 import {
   AdminBranches,
-  AdminCommission,
   AdminLayout,
   AdminList,
   AdminOverview,
@@ -15,6 +14,7 @@ import {
   AdminSalons,
   AdminTickets,
 } from '../features/admin-dashboard/pages';
+import { AdminCommission } from '../features/admin-dashboard/CommissionPage';
 import { AdminMiddlemen } from '../features/admin-dashboard/MiddlemenPage';
 import {
   ComparePage,
